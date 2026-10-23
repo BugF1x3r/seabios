@@ -20,6 +20,7 @@
 
 #ifndef __ASSEMBLY__
 
+#include "config.h" // CONFIG_XBOX
 #include "types.h" // u32
 
 static inline void irq_disable(void)
@@ -265,11 +266,17 @@ static inline void lgdt(struct descloc_s *desc) {
     asm("lgdtl %0" : : "m"(*desc) : "memory");
 }
 
+// On the Xbox (CONFIG_XBOX) A20 is permanently enabled and there is
+// no port 92h: report it on and never touch the port.
 static inline u8 get_a20(void) {
+    if (CONFIG_XBOX)
+        return 1;
     return (inb(PORT_A20) & A20_ENABLE_BIT) != 0;
 }
 
 static inline u8 set_a20(u8 cond) {
+    if (CONFIG_XBOX)
+        return 1;
     u8 val = inb(PORT_A20), a20_enabled = (val & A20_ENABLE_BIT) != 0;
     if (a20_enabled != !!cond)
         outb(val ^ A20_ENABLE_BIT, PORT_A20);

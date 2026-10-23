@@ -26,8 +26,37 @@ static u32 ioconfig_cmd(u16 bdf, u32 addr)
     return 0x80000000 | (bdf << 8) | (addr & 0xfc);
 }
 
+// Xbox MCPX: config reads of 00:00.1, 00:00.2, any bus 1 device other
+// than 0 and any bus 2 and up hang the console.  Every config access
+// (enumeration, INT 1Ah B1xx, BIOS32) ends in one of the six port
+// accessors below, so filtering here makes those addresses read as an
+// absent device and swallows writes to them.
+static int pci_mcpx_hazard(u16 bdf)
+{
+    if (!CONFIG_XBOX)
+        return 0;
+    u8 bus = pci_bdf_to_bus(bdf);
+    if (bus == 0)
+        return pci_bdf_to_dev(bdf) == 0
+            && (pci_bdf_to_fn(bdf) == 1 || pci_bdf_to_fn(bdf) == 2);
+    if (bus == 1)
+        return pci_bdf_to_dev(bdf) != 0;
+    return 1;
+}
+
+static void pci_mcpx_hazard_log(u16 bdf, u32 addr, const char *op)
+{
+    dprintf(5, "pci: MCPX hazard %02x:%02x.%x+%02x %s filtered\n"
+            , pci_bdf_to_bus(bdf), pci_bdf_to_dev(bdf), pci_bdf_to_fn(bdf)
+            , addr, op);
+}
+
 void pci_ioconfig_writel(u16 bdf, u32 addr, u32 val)
 {
+    if (pci_mcpx_hazard(bdf)) {
+        pci_mcpx_hazard_log(bdf, addr, "write");
+        return;
+    }
     outl(ioconfig_cmd(bdf, addr), PORT_PCI_CMD);
     outl(val, PORT_PCI_DATA);
 }
@@ -43,6 +72,10 @@ void pci_config_writel(u16 bdf, u32 addr, u32 val)
 
 void pci_ioconfig_writew(u16 bdf, u32 addr, u16 val)
 {
+    if (pci_mcpx_hazard(bdf)) {
+        pci_mcpx_hazard_log(bdf, addr, "write");
+        return;
+    }
     outl(ioconfig_cmd(bdf, addr), PORT_PCI_CMD);
     outw(val, PORT_PCI_DATA + (addr & 2));
 }
@@ -58,6 +91,10 @@ void pci_config_writew(u16 bdf, u32 addr, u16 val)
 
 void pci_ioconfig_writeb(u16 bdf, u32 addr, u8 val)
 {
+    if (pci_mcpx_hazard(bdf)) {
+        pci_mcpx_hazard_log(bdf, addr, "write");
+        return;
+    }
     outl(ioconfig_cmd(bdf, addr), PORT_PCI_CMD);
     outb(val, PORT_PCI_DATA + (addr & 3));
 }
@@ -73,6 +110,10 @@ void pci_config_writeb(u16 bdf, u32 addr, u8 val)
 
 u32 pci_ioconfig_readl(u16 bdf, u32 addr)
 {
+    if (pci_mcpx_hazard(bdf)) {
+        pci_mcpx_hazard_log(bdf, addr, "read");
+        return (u32)~0;
+    }
     outl(ioconfig_cmd(bdf, addr), PORT_PCI_CMD);
     return inl(PORT_PCI_DATA);
 }
@@ -88,6 +129,10 @@ u32 pci_config_readl(u16 bdf, u32 addr)
 
 u16 pci_ioconfig_readw(u16 bdf, u32 addr)
 {
+    if (pci_mcpx_hazard(bdf)) {
+        pci_mcpx_hazard_log(bdf, addr, "read");
+        return (u16)~0;
+    }
     outl(ioconfig_cmd(bdf, addr), PORT_PCI_CMD);
     return inw(PORT_PCI_DATA + (addr & 2));
 }
@@ -103,6 +148,10 @@ u16 pci_config_readw(u16 bdf, u32 addr)
 
 u8 pci_ioconfig_readb(u16 bdf, u32 addr)
 {
+    if (pci_mcpx_hazard(bdf)) {
+        pci_mcpx_hazard_log(bdf, addr, "read");
+        return (u8)~0;
+    }
     outl(ioconfig_cmd(bdf, addr), PORT_PCI_CMD);
     return inb(PORT_PCI_DATA + (addr & 3));
 }

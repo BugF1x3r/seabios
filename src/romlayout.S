@@ -34,10 +34,12 @@ transition32:
         outb %al, $PORT_CMOS_INDEX
         inb $PORT_CMOS_DATA, %al
 
-        // enable a20
+#if !CONFIG_XBOX
+        // enable a20 (always on and no port 92h on the Xbox)
         inb $PORT_A20, %al
         orb $A20_ENABLE_BIT, %al
         outb %al, $PORT_A20
+#endif
         movl %ecx, %eax
 
 transition32_nmi_off:

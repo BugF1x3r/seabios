@@ -140,6 +140,18 @@ endchoice
             it into 128 KB (which was big enouth for a long time) you'll
             probably have to disable some featues such as xhci support.
 
+    config XBOX
+        depends on COREBOOT
+        bool "Original Xbox (MCPX/NV2A) quirks for XBIOS"
+        default n
+        help
+            Build for the original Xbox behind the XBIOS init stage.
+            PCI config accesses to 00:00.1, 00:00.2, bus 1 devices
+            other than 0 and buses 2 and up hang the MCPX; they read
+            as all ones and writes to them are dropped. A20 is treated
+            as permanently enabled: there is no keyboard controller
+            and no port 92h, so neither is ever touched.
+
 endmenu
 
 menu "Hardware support"

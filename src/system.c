@@ -18,6 +18,11 @@
 static void
 handle_152400(struct bregs *regs)
 {
+    if (CONFIG_XBOX) {
+        // A20 cannot be disabled on the Xbox.
+        set_code_invalid_silent(regs, RET_EUNSUPPORTED);
+        return;
+    }
     set_a20(0);
     set_code_success(regs);
 }
@@ -39,7 +44,8 @@ handle_152402(struct bregs *regs)
 static void
 handle_152403(struct bregs *regs)
 {
-    regs->bx = 3;
+    // Xbox: no keyboard controller and no port 92h to offer.
+    regs->bx = CONFIG_XBOX ? 0 : 3;
     set_code_success(regs);
 }
 
