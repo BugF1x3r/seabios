@@ -95,8 +95,9 @@ screen_putc(struct putcinfo *action, char c)
     if (ScreenAndDebug)
         debug_putc(&debuginfo, c);
     if (!MODESEGMENT && fbcon_active()) {
-        // The framebuffer console shows printf output until boot (through
-        // debug_putc above or directly); fbcon_prepboot syncs the vgabios.
+        // The framebuffer console shows printf output until a boot sector
+        // is entered (through debug_putc above or directly); fbcon_boot
+        // then syncs the vgabios cursor.
         if (!ScreenAndDebug)
             fbcon_putc(c);
         return;

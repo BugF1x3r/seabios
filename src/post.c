@@ -160,9 +160,6 @@ platform_hardware_setup(void)
 void
 prepareboot(void)
 {
-    // Stop the framebuffer debug console, hand its cursor to the vgabios
-    fbcon_prepboot();
-
     // Change TPM phys. presence state befor leaving BIOS
     tpm_prepboot();
 

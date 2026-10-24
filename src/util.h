@@ -121,7 +121,7 @@ struct cb_header *find_cb_table(void);
 int fbcon_active(void);
 void fbcon_putc(char c);
 void fbcon_setup(struct cb_header *cbh, const u8 *log, u32 loglen);
-void fbcon_prepboot(void);
+void fbcon_boot(void);
 
 // fw/csm.c
 int csm_bootprio_fdc(struct pci_device *pci, int port, int fdid);

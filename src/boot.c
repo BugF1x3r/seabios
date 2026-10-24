@@ -867,6 +867,7 @@ static void
 call_boot_entry(struct segoff_s bootsegip, u8 bootdrv)
 {
     dprintf(1, "Booting from %04x:%04x\n", bootsegip.seg, bootsegip.offset);
+    fbcon_boot();
     struct bregs br;
     memset(&br, 0, sizeof(br));
     br.flags = F_IF;

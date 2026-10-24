@@ -8,8 +8,8 @@
 // screen. Layout rules: '\n' starts a new row (the text rows scroll up by
 // one at the bottom), '\r' and other control bytes are dropped, a printable
 // byte at the last column wraps first. printf() output is shown here too
-// until boot (output.c); the vgabios cursor is synchronized in
-// fbcon_prepboot() so the OS's int 10h output follows the log.
+// a boot sector is entered (output.c); fbcon_boot() then hands the cursor
+// to the vgabios so the OS's int 10h output follows the log.
 //
 // Copyright (C) 2026 Marco Janssen Groesbeek
 //
@@ -163,21 +163,21 @@ fbcon_setup(struct cb_header *cbh, const u8 *log, u32 loglen)
     Fbcon.active = 1;
 }
 
-// Stop before the boot loader runs and hand the cursor to the vgabios.
+// Stop as the boot loader is entered and hand the cursor to the vgabios.
 void
-fbcon_prepboot(void)
+fbcon_boot(void)
 {
     if (!fbcon_active())
         return;
-    Fbcon.active = 0;
-    if (GET_IVT(0x10).segoff == FUNC16(entry_10).segoff)
-        return; // no vgabios
     int row = Fbcon.row, col = Fbcon.col;
     if (row > GET_BDA(video_rows))
         row = GET_BDA(video_rows);
     if (col >= GET_BDA(video_cols))
         col = GET_BDA(video_cols) - 1;
     dprintf(3, "fbcon: cursor to the vgabios at row %d col %d\n", row, col);
+    Fbcon.active = 0;
+    if (GET_IVT(0x10).segoff == FUNC16(entry_10).segoff)
+        return; // no vgabios
     struct bregs br;
     memset(&br, 0, sizeof(br));
     br.flags = F_IF;
