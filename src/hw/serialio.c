@@ -17,6 +17,9 @@
 
 #define DEBUG_TIMEOUT 100000
 
+// Zero when CONFIG_DEBUG_SERIAL_PROBE found no UART (serial_debug_detect).
+u8 SerialDebugPresent VARFSEG = 1;
+
 // Write to a serial port register
 static void
 serial_debug_write(u8 offset, u8 val)
@@ -61,11 +64,30 @@ serial_debug_preinit(void)
                 , oldparam, oldier, newparam, newier);
 }
 
+// Probe the UART's scratch register; silence serial output if absent.
+void
+serial_debug_detect(void)
+{
+    if (!CONFIG_DEBUG_SERIAL || !CONFIG_DEBUG_SERIAL_PROBE)
+        return;
+    serial_debug_write(SEROFF_SCR, 0x5a);
+    u8 a = serial_debug_read(SEROFF_SCR);
+    serial_debug_write(SEROFF_SCR, 0xa5);
+    u8 b = serial_debug_read(SEROFF_SCR);
+    if (a == 0x5a && b == 0xa5)
+        return;
+    SerialDebugPresent = 0;
+    dprintf(1, "No UART at %x (scratch read %x %x): serial debug off\n"
+            , CONFIG_DEBUG_SERIAL_PORT, a, b);
+}
+
 // Write a character to the serial port.
 static void
 serial_debug(char c)
 {
     if (!CONFIG_DEBUG_SERIAL && (!CONFIG_DEBUG_SERIAL_MMIO || MODESEGMENT))
+        return;
+    if (CONFIG_DEBUG_SERIAL_PROBE && !GET_GLOBAL(SerialDebugPresent))
         return;
     int timeout = DEBUG_TIMEOUT;
     while ((serial_debug_read(SEROFF_LSR) & 0x20) != 0x20)
@@ -88,6 +110,8 @@ void
 serial_debug_flush(void)
 {
     if (!CONFIG_DEBUG_SERIAL && (!CONFIG_DEBUG_SERIAL_MMIO || MODESEGMENT))
+        return;
+    if (CONFIG_DEBUG_SERIAL_PROBE && !GET_GLOBAL(SerialDebugPresent))
         return;
     int timeout = DEBUG_TIMEOUT;
     while ((serial_debug_read(SEROFF_LSR) & 0x60) != 0x60)
