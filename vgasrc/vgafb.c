@@ -270,6 +270,8 @@ gfx_direct(struct gfx_op *op)
     void *fb = (void*)GET_GLOBAL(VBE_framebuffer);
     if (!fb)
         return;
+    if (CONFIG_VGA_FBSYNC && fbsync_off())
+        return;
     int depth = GET_GLOBAL(op->curmode_g->depth);
     int bypp = DIV_ROUND_UP(depth, 8);
     void *dest_far = (fb + op->displaystart + op->y * op->linelength

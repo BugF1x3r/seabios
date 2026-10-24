@@ -510,6 +510,13 @@ handle_104f(struct bregs *regs)
     case 0x09: vbe_104f09(regs); break;
     case 0x0a: vbe_104f0a(regs); break;
     case 0x10: vbe_104f10(regs); break;
+    case 0x14:
+        if (CONFIG_VGA_FBSYNC) {
+            fbsync_104f14(regs);
+            break;
+        }
+        vbe_104fXX(regs);
+        break;
     case 0x15: vbe_104f15(regs); break;
     default:   vbe_104fXX(regs); break;
     }

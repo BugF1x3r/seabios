@@ -24,6 +24,15 @@ struct vgamode_s *cbvga_find_mode(int mode)
 {
     if (mode == GET_GLOBAL(CBmode))
         return &CBmodeinfo;
+    if (CONFIG_VGA_FBSYNC) {
+        // Text modes and 13h in legacy video memory (fbsync.c); 12h is
+        // the framebuffer itself: int 10h drawing works, A0000 does not.
+        struct vgamode_s *vmode_g = fbsync_find_mode(mode);
+        if (vmode_g)
+            return vmode_g;
+        if (mode == 0x12)
+            return &CBmodeinfo;
+    }
     if (mode == 0x03)
         return &CBemulinfo;
 
@@ -84,14 +93,26 @@ cbvga_set_window(struct vgamode_s *curmode_g, int window, int val)
 int
 cbvga_minimum_linelength(struct vgamode_s *vmode_g)
 {
-    /* Can't change mode, always report active pitch. */
-    return GET_GLOBAL(CBlinelength);
+    return cbvga_get_linelength(vmode_g);
 }
 
 int
 cbvga_get_linelength(struct vgamode_s *curmode_g)
 {
+    if (CONFIG_VGA_FBSYNC) {
+        int len = fbsync_linelength(curmode_g);
+        if (len >= 0)
+            return len;
+    }
+    /* Can't change mode, always report active pitch. */
     return GET_GLOBAL(CBlinelength);
+}
+
+// The mode that is the coreboot framebuffer (its geometry).
+struct vgamode_s *
+cbvga_fb_mode(void)
+{
+    return &CBmodeinfo;
 }
 
 int
@@ -135,6 +156,12 @@ cbvga_save_restore(int cmd, u16 seg, void *data)
 int
 cbvga_set_mode(struct vgamode_s *vmode_g, int flags)
 {
+    if (CONFIG_VGA_FBSYNC && fbsync_linelength(vmode_g) >= 0) {
+        // Real text/packed memory, rendered by fbsync.c: no emulation.
+        MASK_BDA_EXT(flags, BF_EMULATE_TEXT, 0);
+        fbsync_set_mode(vmode_g, flags);
+        return 0;
+    }
     u8 emul = vmode_g == &CBemulinfo || GET_GLOBAL(CBmode) == 0x03;
     /*
      * The extra_stack flag is false when running in windows x86

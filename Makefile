@@ -219,7 +219,7 @@ SRCVGA=src/output.c src/string.c src/hw/pci.c src/hw/serialio.c \
     vgasrc/vgafonts.c vgasrc/vbe.c \
     vgasrc/stdvga.c vgasrc/stdvgamodes.c vgasrc/stdvgaio.c \
     vgasrc/clext.c vgasrc/svgamodes.c vgasrc/atiext.c vgasrc/bochsvga.c vgasrc/geodevga.c \
-    src/fw/coreboot.c vgasrc/cbvga.c vgasrc/bochsdisplay.c vgasrc/ramfb.c
+    src/fw/coreboot.c vgasrc/cbvga.c vgasrc/fbsync.c vgasrc/bochsdisplay.c vgasrc/ramfb.c
 
 ifeq "$(CONFIG_VGA_FIXUP_ASM)" "y"
 $(OUT)vgaccode16.raw.s: $(OUT)autoconf.h $(patsubst %.c, $(OUT)%.o,$(SRCVGA)) ; $(call whole-compile, $(filter-out -fomit-frame-pointer,$(CFLAGS16)) -fno-omit-frame-pointer -S -Isrc, $(SRCVGA),$@)

@@ -20,6 +20,19 @@ int cbvga_save_restore(int cmd, u16 seg, void *data);
 int cbvga_set_mode(struct vgamode_s *vmode_g, int flags);
 void cbvga_setup_modes(u64 addr, u8 bpp, u32 xlines, u32 ylines, u32 linelength);
 int cbvga_setup(void);
+struct vgamode_s *cbvga_fb_mode(void);
+
+// fbsync.c
+struct bregs;
+struct vgamode_s *fbsync_find_mode(int mode);
+int fbsync_linelength(struct vgamode_s *vmode_g);
+void fbsync_set_mode(struct vgamode_s *vmode_g, int flags);
+void fbsync_1010(struct bregs *regs);
+int fbsync_off(void);
+void fbsync_104f14(struct bregs *regs);
+void fbsync_post_handle10(struct bregs *regs);
+void fbsync_timer(void);
+void fbsync_setup(void);
 
 // bochsdisplay.c
 int bochs_display_setup(void);

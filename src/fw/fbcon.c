@@ -164,12 +164,26 @@ fbcon_setup(struct cb_header *cbh, const u8 *log, u32 loglen)
 }
 
 // Stop as the boot loader is entered and hand the cursor to the vgabios.
+// When the vgabios keeps its text mode at B8000, the log's last rows go
+// there too, so the OS's output scrolls them instead of drawing over them.
 void
 fbcon_boot(void)
 {
     if (!fbcon_active())
         return;
     int row = Fbcon.row, col = Fbcon.col;
+    int rows = GET_BDA(video_rows) + 1, cols = GET_BDA(video_cols);
+    if (GET_BDA(video_mode) <= 3 && cols && cols <= Fbcon.cols && rows > 1) {
+        int shift = row >= rows ? row - rows + 1 : 0;
+        u16 *vmem = (u16*)0xb8000;
+        int r, c;
+        for (r = 0; r < rows; r++)
+            for (c = 0; c < cols; c++) {
+                u8 ch = r + shift < Fbcon.rows ? FbconShadow[r + shift][c] : 0;
+                vmem[r * cols + c] = 0x0700 | (ch ? ch : ' ');
+            }
+        row -= shift;
+    }
     if (row > GET_BDA(video_rows))
         row = GET_BDA(video_rows);
     if (col >= GET_BDA(video_cols))

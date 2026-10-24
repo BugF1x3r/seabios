@@ -109,6 +109,8 @@ void VISIBLE16
 handle_timer_hook(void)
 {
     swcursor_check_event();
+    if (CONFIG_VGA_FBSYNC)
+        fbsync_timer();
 }
 
 static void
@@ -190,6 +192,8 @@ vga_post(struct bregs *regs)
     allocate_extra_stack();
 
     hook_timer_irq();
+
+    fbsync_setup();
 
     SET_VGA(HaveRunInit, 1);
 

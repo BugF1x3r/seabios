@@ -140,6 +140,19 @@ menu "VGA ROM"
             Support emulating text mode features when only a
             framebuffer is available.
 
+    config VGA_FBSYNC
+        depends on VGA_COREBOOT
+        bool "Legacy text and mode 13h video memory on the framebuffer"
+        default n
+        help
+            Keep the text modes' cells at B8000 and mode 13h's pixels at
+            A0000 as a real VGA does, and render the rows that changed
+            into the coreboot framebuffer from the timer irq and after
+            int 10h calls. Programs that write video memory directly are
+            then visible; the DAC lives in the BIOS (int 10h ah=10h), so
+            palettes written through ports 3C8h/3C9h are not seen. Takes
+            8 KiB of low memory.
+
     config VGA_FIXUP_ASM
         depends on BUILD_VGABIOS
         bool "Fixup assembler to work with broken emulators"

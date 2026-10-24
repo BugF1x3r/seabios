@@ -639,7 +639,10 @@ static void
 handle_1010(struct bregs *regs)
 {
     if (!CONFIG_VGA_STDVGA_PORTS) {
-        handle_1010XX(regs);
+        if (CONFIG_VGA_FBSYNC)
+            fbsync_1010(regs);
+        else
+            handle_1010XX(regs);
         return;
     }
     switch (regs->al) {
@@ -1130,4 +1133,7 @@ handle_10(struct bregs *regs)
     case 0x4f: handle_104f(regs); break;
     default:   handle_10XX(regs); break;
     }
+
+    if (CONFIG_VGA_FBSYNC)
+        fbsync_post_handle10(regs);
 }
