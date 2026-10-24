@@ -327,6 +327,7 @@ handle_post(void)
         return;
 
     serial_debug_preinit();
+    serial_debug_detect();
     debug_banner();
 
     // Check if we are running under Xen.

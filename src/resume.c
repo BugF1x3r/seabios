@@ -119,11 +119,37 @@ s3_resume(void)
     farcall16big(&br);
 }
 
+// Xbox: ask the SMC for a power cycle over the MCPX SMBus (I/O 0xC000, as
+// the XBIOS init stage programs it). A CF9 reset only restarts the CPU and
+// leaves the modchip on the same bank, and the SMC's plain reset (0x01)
+// left the 1.4 without video; the power cycle resets the modchip's bank
+// register, so with no auto-boot bank the chip OS menu comes back.
+static void
+xbox_smc_reboot(void)
+{
+    if (!CONFIG_XBOX)
+        return;
+    dprintf(1, "Asking the SMC for a reset\n");
+    int spin;
+    for (spin = 0; spin < 100000 && (inw(0xc000) & 0x0800); spin++)
+        ;
+    outw(inw(0xc000), 0xc000);          // clear status
+    outb((0x10 << 1) | 0, 0xc004);      // SMC, write
+    outb(0x02, 0xc008);                 // reset/power register
+    outw(0x40, 0xc006);                 // 0x40 power cycle (0x01 reset, 0x80 off)
+    outb(0x1a, 0xc002);                 // write byte
+    for (spin = 0; spin < 1000000; spin++)
+        ;
+}
+
 // Attempt to invoke a hard-reboot.
 static void
 tryReboot(void)
 {
     dprintf(1, "Attempting a hard reboot\n");
+
+    // Xbox: the SMC does it
+    xbox_smc_reboot();
 
     // Use a QEMU specific reboot on QEMU
     qemu_reboot();

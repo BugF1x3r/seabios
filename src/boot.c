@@ -489,7 +489,8 @@ boot_init(void)
         }
     }
 
-    BootRetryTime = romfile_loadint("etc/boot-fail-wait", 60*1000);
+    // Xbox: a diskless boot is the normal end of a test run; reboot soon.
+    BootRetryTime = romfile_loadint("etc/boot-fail-wait", CONFIG_XBOX ? 3*1000 : 60*1000);
 
     loadBootOrder();
     loadBiosGeometry();
