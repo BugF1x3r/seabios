@@ -601,6 +601,17 @@ menu "Debugging"
             after boot using 'cbmem -c'.  Only 32bit code (basically every-
             thing before booting the OS) writes to the log buffer.
 
+    config DEBUG_IDT
+        depends on DEBUG_LEVEL != 0
+        bool "Report 32-bit CPU exceptions on the debug console"
+        default n
+        help
+            Install an IDT for the 32-bit flat code during POST that
+            prints the vector, error code, registers and a stack sample
+            on the debug console and halts, instead of the dummy IDT's
+            silent machine shutdown. Removed again before the boot
+            loader runs.
+
     config DEBUG_FRAMEBUFFER
         depends on COREBOOT && DEBUG_LEVEL != 0
         bool "coreboot framebuffer debug console"

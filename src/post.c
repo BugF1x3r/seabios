@@ -196,6 +196,8 @@ startBoot(void)
 static void
 maininit(void)
 {
+    exc_setup();
+
     // Initialize internal interfaces.
     interface_init();
 
@@ -226,6 +228,7 @@ maininit(void)
 
     // Prepare for boot.
     prepareboot();
+    exc_prepboot();
 
     // Write protect bios memory.
     make_bios_readonly();

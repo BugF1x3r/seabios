@@ -123,6 +123,10 @@ void fbcon_putc(char c);
 void fbcon_setup(struct cb_header *cbh, const u8 *log, u32 loglen);
 void fbcon_boot(void);
 
+// fw/exc.c
+void exc_setup(void);
+void exc_prepboot(void);
+
 // fw/csm.c
 int csm_bootprio_fdc(struct pci_device *pci, int port, int fdid);
 int csm_bootprio_ata(struct pci_device *pci, int chanid, int slave);
