@@ -592,4 +592,24 @@ menu "Debugging"
             after boot using 'cbmem -c'.  Only 32bit code (basically every-
             thing before booting the OS) writes to the log buffer.
 
+    config DEBUG_FRAMEBUFFER
+        depends on COREBOOT && DEBUG_LEVEL != 0
+        bool "coreboot framebuffer debug console"
+        default n
+        help
+            Render the debug log as text on the framebuffer coreboot
+            describes (32 bpp only), for boards without a serial port.
+            The cbmem console contents left by the platform init code
+            are replayed to continue below its own output. printf()
+            output appears there too until boot; the vgabios cursor is
+            synchronized before the boot loader runs.
+
+    config DEBUG_FRAMEBUFFER_TOP
+        depends on DEBUG_FRAMEBUFFER
+        int "Character rows at the top left untouched"
+        default 0
+        help
+            Rows the platform init code keeps for its own display (XBIOS
+            shows a colour-bar strip in the first row).
+
 endmenu

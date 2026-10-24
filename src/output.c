@@ -42,8 +42,10 @@ debug_putc(struct putcinfo *action, char c)
     if (! CONFIG_DEBUG_LEVEL)
         return;
     qemu_debug_putc(c);
-    if (!MODESEGMENT)
+    if (!MODESEGMENT) {
         coreboot_debug_putc(c);
+        fbcon_putc(c);
+    }
     serial_debug_putc(c);
 }
 
@@ -92,6 +94,13 @@ screen_putc(struct putcinfo *action, char c)
 {
     if (ScreenAndDebug)
         debug_putc(&debuginfo, c);
+    if (!MODESEGMENT && fbcon_active()) {
+        // The framebuffer console shows printf output until boot (through
+        // debug_putc above or directly); fbcon_prepboot syncs the vgabios.
+        if (!ScreenAndDebug)
+            fbcon_putc(c);
+        return;
+    }
     if (c == '\n')
         screenc('\r');
     screenc(c);

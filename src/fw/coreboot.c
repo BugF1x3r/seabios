@@ -196,8 +196,13 @@ coreboot_preinit(void)
     struct cb_cbmem_ref *cbref = find_cb_subtable(cbh, CB_TAG_CBMEM_CONSOLE);
     if (cbref) {
         cbcon = (void*)(u32)cbref->cbmem_addr;
+        u32 cursor = cbcon->cursor & CBMC_CURSOR_MASK;
+        int linear = !(cbcon->cursor & CBMC_OVERFLOW) && cursor <= cbcon->size;
+        fbcon_setup(cbh, linear ? cbcon->body : NULL, linear ? cursor : 0);
         debug_banner();
         dprintf(1, "Found coreboot cbmem console @ %llx\n", cbref->cbmem_addr);
+    } else {
+        fbcon_setup(cbh, NULL, 0);
     }
 
     struct cb_mainboard *cbmb = find_cb_subtable(cbh, CB_TAG_MAINBOARD);

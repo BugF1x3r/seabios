@@ -45,6 +45,8 @@ enable_vga_console(void)
     /* Enable VGA text mode */
     memset(&br, 0, sizeof(br));
     br.ax = 0x0003;
+    if (fbcon_active())
+        br.al |= 0x80; // keep the framebuffer: the log is on it
     call16_int10(&br);
 
     // Write to screen.
