@@ -150,22 +150,6 @@ isready(struct atadrive_s *adrive_gf)
  * ATA send command
  ****************************************************************/
 
-struct ata_pio_command {
-    u8 feature;
-    u8 sector_count;
-    u8 lba_low;
-    u8 lba_mid;
-    u8 lba_high;
-    u8 device;
-    u8 command;
-
-    u8 feature2;
-    u8 sector_count2;
-    u8 lba_low2;
-    u8 lba_mid2;
-    u8 lba_high2;
-};
-
 // Send an ata command to the drive.
 static int
 send_cmd(struct atadrive_s *adrive_gf, struct ata_pio_command *cmd)
@@ -660,8 +644,8 @@ fail:
  ****************************************************************/
 
 // Send an identify device or identify device packet command.
-static int
-send_ata_identity(struct atadrive_s *adrive, u16 *buffer, int command)
+int
+ata_identify(struct atadrive_s *adrive, u16 *buffer, int command)
 {
     memset(buffer, 0, DISK_SECTOR_SIZE);
 
@@ -729,7 +713,7 @@ static struct atadrive_s *
 init_drive_atapi(struct atadrive_s *dummy, u16 *buffer)
 {
     // Send an IDENTIFY_DEVICE_PACKET command to device
-    int ret = send_ata_identity(dummy, buffer, ATA_CMD_IDENTIFY_PACKET_DEVICE);
+    int ret = ata_identify(dummy, buffer, ATA_CMD_IDENTIFY_PACKET_DEVICE);
     if (ret)
         return NULL;
 
@@ -770,7 +754,7 @@ static struct atadrive_s *
 init_drive_ata(struct atadrive_s *dummy, u16 *buffer)
 {
     // Send an IDENTIFY_DEVICE command to device
-    int ret = send_ata_identity(dummy, buffer, ATA_CMD_IDENTIFY_DEVICE);
+    int ret = ata_identify(dummy, buffer, ATA_CMD_IDENTIFY_DEVICE);
     if (ret)
         return NULL;
 
@@ -912,6 +896,9 @@ ata_detect(void *data)
                 // No ATA drive found
                 continue;
         }
+
+        // Xbox: negotiate the transfer mode the OS will inherit.
+        ata_xbox_set_mode(adrive, buffer, adrive->drive.type == DTYPE_ATA_ATAPI);
 
         u16 resetresult = buffer[93];
         dprintf(6, "ata_detect resetresult=%04x\n", resetresult);

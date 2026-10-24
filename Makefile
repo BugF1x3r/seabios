@@ -40,7 +40,7 @@ SRC32FLAT=$(SRCBOTH) post.c e820map.c malloc.c romfile.c x86.c		\
     optionroms.c pmm.c font.c boot.c bootsplash.c jpeg.c bmp.c		\
     tcgbios.c sha1.c hw/pcidevice.c hw/ahci.c hw/pvscsi.c		\
     hw/usb-xhci.c hw/usb-hub.c hw/sdcard.c fw/coreboot.c		\
-    fw/fbcon.c fw/fbconfont.c fw/exc.c					\
+    fw/fbcon.c fw/fbconfont.c fw/exc.c hw/ata-xbox.c			\
     fw/lzmadecode.c fw/multiboot.c fw/csm.c fw/biostables.c		\
     fw/paravirt.c fw/shadow.c fw/pciinit.c fw/smm.c fw/smp.c		\
     fw/mtrr.c fw/xen.c fw/acpi.c fw/mptable.c fw/pirtable.c		\

@@ -22,12 +22,33 @@ struct atadrive_s {
     u8 slave;
 };
 
+struct ata_pio_command {
+    u8 feature;
+    u8 sector_count;
+    u8 lba_low;
+    u8 lba_mid;
+    u8 lba_high;
+    u8 device;
+    u8 command;
+
+    u8 feature2;
+    u8 sector_count2;
+    u8 lba_low2;
+    u8 lba_mid2;
+    u8 lba_high2;
+};
+
 // ata.c
 char *ata_extract_model(char *model, u32 size, u16 *buffer);
 int ata_extract_version(u16 *buffer);
+int ata_cmd_nondata(struct atadrive_s *adrive_gf, struct ata_pio_command *cmd);
+int ata_identify(struct atadrive_s *adrive, u16 *buffer, int command);
 int ata_process_op(struct disk_op_s *op);
 int ata_atapi_process_op(struct disk_op_s *op);
 void ata_setup(void);
+
+// ata-xbox.c
+void ata_xbox_set_mode(struct atadrive_s *adrive, u16 *buffer, int atapi);
 
 #define PORT_ATA2_CMD_BASE     0x0170
 #define PORT_ATA1_CMD_BASE     0x01f0

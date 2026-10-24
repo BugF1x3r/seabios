@@ -152,6 +152,31 @@ endchoice
             as permanently enabled: there is no keyboard controller
             and no port 92h, so neither is ever touched.
 
+    config XBOX_IDE_UDMA_MAX
+        depends on XBOX
+        int "Highest UDMA mode to set on an IDE drive (0-5)"
+        range 0 5
+        default 5
+        help
+            After IDENTIFY, SeaBIOS asks each drive on the MCPX IDE
+            controller for the fastest Ultra DMA mode it supports up to
+            this one and programs the controller's timing to match, so
+            the OS inherits a working DMA setup (Win98's inbox driver
+            does not program the MCPX). The nForce controller tops out
+            at UDMA5. Without any UDMA support the fastest Multiword
+            DMA mode is set, else PIO 4.
+
+    config XBOX_IDE_UDMA_40WIRE
+        depends on XBOX
+        int "Highest UDMA mode behind a 40-conductor cable (0-5)"
+        range 0 5
+        default 2
+        help
+            Cap applied when the drive does not report an 80-conductor
+            cable (IDENTIFY word 93 bit 13), the Xbox's stock ribbon and
+            the usual SATA adapter case. UDMA2 is the ATA limit for 40
+            wires; set 5 to trust the drive and the cabling instead.
+
 endmenu
 
 menu "Hardware support"
