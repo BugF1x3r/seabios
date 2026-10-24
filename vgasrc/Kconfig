@@ -151,7 +151,10 @@ menu "VGA ROM"
             int 10h calls. Programs that write video memory directly are
             then visible; the DAC lives in the BIOS (int 10h ah=10h), so
             palettes written through ports 3C8h/3C9h are not seen. Takes
-            8 KiB of low memory.
+            8 KiB of low memory. On the Xbox console (the XBIOS init
+            stage's XBOX_VGA coreboot table tag) mode 13h is scanned out
+            natively by the NV2A instead, hardware DAC and port palettes
+            included.
 
     config VGA_FIXUP_ASM
         depends on BUILD_VGABIOS

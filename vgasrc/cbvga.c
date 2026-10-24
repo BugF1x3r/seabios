@@ -156,6 +156,8 @@ cbvga_save_restore(int cmd, u16 seg, void *data)
 int
 cbvga_set_mode(struct vgamode_s *vmode_g, int flags)
 {
+    if (CONFIG_VGA_FBSYNC)
+        fbsync_leave_native();
     if (CONFIG_VGA_FBSYNC && fbsync_linelength(vmode_g) >= 0) {
         // Real text/packed memory, rendered by fbsync.c: no emulation.
         MASK_BDA_EXT(flags, BF_EMULATE_TEXT, 0);

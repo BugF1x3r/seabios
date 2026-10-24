@@ -16,6 +16,15 @@
 // through port 3C8h/3C9h are not seen. Mode 12h is the framebuffer itself
 // (int 10h drawing works, direct A0000 writes do not).
 //
+// On the Xbox console (the init stage's XBOX_VGA coreboot table tag) mode
+// 13h is native instead: the NV2A's VGA core scans the page at A0000 out of
+// RAM itself (VGA format, byte mode, pixel and line doubling, centred on
+// the 480-line raster) through its hardware DAC, so a program's direct
+// writes and its own palette writes to ports 3C8h/3C9h show unchanged. The
+// vgabios reaches the NV2A's registers through int 15h/87h one-word copies
+// (16-bit MMIO writes) and puts the 32 bpp register set back when 13h ends.
+// The ports (VSE2) are open only in 13h; text and VBE modes keep them shut.
+//
 // The renderer stays idle until the OS or a boot loader draws through int
 // 10h, so a platform console drawn on the framebuffer before that survives.
 // int 10h ax=4F14h bl=0 switches every framebuffer write of this vgabios
@@ -33,6 +42,9 @@
 #include "output.h" // dprintf
 #include "stdvga.h" // SEG_CTEXT
 #include "string.h" // memset_far
+#include "util.h" // find_cb_table
+#include "hw/pci.h" // pci_config_readl
+#include "x86.h" // outb
 #include "vgabios.h" // get_current_mode
 #include "vgafb.h" // memcpy_high
 #include "vgautil.h" // VBE_framebuffer
@@ -56,6 +68,9 @@ struct fbsync_s {
     u8 force;                    // repaint every row on the next render
     u8 below_cleared;            // framebuffer below the text rows is black
     u8 off;                      // int 10h 4F14h: no framebuffer writes at all
+    u8 native;                   // the NV2A scans A0000 (native 13h is on)
+    u8 dac_ports;                // DAC reads via 3C7h/3C9h: 0 untried, 1 ok, 2 not
+    u32 io;                      // int 15h/87h source/destination for MMIO
 };
 
 u16 FbsyncSeg VAR16;
@@ -104,6 +119,282 @@ fbsync_linelength(struct vgamode_s *vmode_g)
 
 
 /****************************************************************
+ * Native mode 13h on the Xbox's NV2A
+ ****************************************************************/
+
+// The init stage's tag: the NV2A's registers and the 32 bpp values of the
+// ones the 13h switch changes. Absent (mmio 0) off the console: xemu shows
+// VGA format as garbage and keeps the copy path.
+#define CB_TAG_XBOX_VGA 0x5856
+struct cb_xbox_vga {
+    u32 tag, size;
+    u32 mmio;                    // NV2A registers (BAR0)
+    u32 start;                   // PCRTC_START
+    u32 fp_v[7];                 // PRAMDAC flat-panel vertical timing
+    u8 misc, sr01, sr02, sr04, gr05, gr06;
+    u8 ar10, ar11, ar12, ar13, ar14;
+    u8 cr07, cr09, cr12, cr13, cr14, cr15, cr17, cr19, cr25, cr28;
+    u8 pad[3];
+} PACKED;
+
+static struct cb_xbox_vga NvVga VAR16;
+
+#define NV_PRMVIO   0x0c0000     // 3C2-3CF: misc, VSE2, sequencer, graphics
+#define NV_PCRTC    0x600000
+#define NV_PRMCIO   0x601000     // 3B4-3DA: CRTC, attribute, status
+#define NV_PRAMDAC  0x680000
+#define NV_PRMDIO   0x681000     // 3C6-3C9: DAC
+
+#define NV13_LINES 400           // 200 rows, line-doubled
+#define NV13_HEIGHT 480          // the raster it is centred on
+
+// One 16-bit (len 2) or 32-bit (len 4) MMIO write through int 15h/87h, the
+// only way to BAR0 from real mode or V86. A one-word copy writes both bytes
+// in one cycle: index and data for the CRTC, sequencer and graphics
+// controller. Never two words to an 8-bit register pair: a dword at 3C8h
+// corrupts the DAC entry.
+static void
+nv_write(u16 fs, u32 reg, u32 val, int len)
+{
+    SET_FS(fs, io, val);
+    memcpy_high((void*)(GET_GLOBAL(NvVga.mmio) + reg)
+                , MAKE_FLATPTR(fs, FS_OFF(io)), len);
+}
+
+static void
+nv_read16(u16 fs, u32 reg)
+{
+    memcpy_high(MAKE_FLATPTR(fs, FS_OFF(io))
+                , (void*)(GET_GLOBAL(NvVga.mmio) + reg), 2);
+}
+
+static void
+nv_idx(u16 fs, u32 reg, u8 idx, u8 val)
+{
+    nv_write(fs, reg, idx | (val << 8), 2);
+}
+
+#define nv_crtc(fs, i, v) nv_idx((fs), NV_PRMCIO + 0x3d4, (i), (v))
+#define nv_seq(fs, i, v) nv_idx((fs), NV_PRMVIO + 0x3c4, (i), (v))
+#define nv_gr(fs, i, v) nv_idx((fs), NV_PRMVIO + 0x3ce, (i), (v))
+
+// The attribute controller takes index and data at 3C0h as two words (one
+// (index, data) word does not take). A status read first puts its
+// flip-flop on the index; nv_attr_end turns palette access back on.
+static void
+nv_attr_begin(u16 fs)
+{
+    nv_read16(fs, NV_PRMCIO + 0x3da);
+}
+
+static void
+nv_attr(u16 fs, u8 i, u8 v)
+{
+    nv_write(fs, NV_PRMCIO + 0x3c0, i, 2);
+    nv_write(fs, NV_PRMCIO + 0x3c0, v, 2);
+}
+
+static void
+nv_attr_end(u16 fs)
+{
+    nv_write(fs, NV_PRMCIO + 0x3c0, 0x20, 2);
+}
+
+// The hardware DAC (6 bits per component, as DOS expects): (index, red) at
+// 3C8h, then green and blue as words at 3C9h.
+static void
+nv_dac_write(u16 fs, int i, u8 r, u8 g, u8 b)
+{
+    nv_idx(fs, NV_PRMDIO + 0x3c8, i, r);
+    nv_write(fs, NV_PRMDIO + 0x3c9, g, 2);
+    nv_write(fs, NV_PRMDIO + 0x3c9, b, 2);
+}
+
+// Through the legacy ports, which are open in native 13h.
+static void
+nv_dac_read(int i, u8 *r, u8 *g, u8 *b)
+{
+    outb(i, 0x3c7);
+    *r = inb(0x3c9);
+    *g = inb(0x3c9);
+    *b = inb(0x3c9);
+}
+
+// Misc output, then VSE2 (3C3h) as a word of its own (its high byte sets
+// the sequencer index, which every sequencer write sets again). Misc bit 0
+// decodes the CRTC and status at 3D4h/3DAh (13h programs poll 3DAh for
+// retrace); VSE2 enables the legacy ports (3C0h-3DFh), which then still
+// need nv_open_ports.
+static void
+nv_misc(u16 fs, u8 misc, u8 vse2)
+{
+    nv_write(fs, NV_PRMVIO + 0x3c2, misc | (vse2 << 8), 2);
+    nv_write(fs, NV_PRMVIO + 0x3c3, vse2, 2);
+}
+
+// Do the legacy ports reach the NV2A: misc read through port 3CCh equals
+// misc read through MMIO, and a graphics index written to port 3CEh reads
+// back through MMIO.
+static int
+nv_ports_ok(u16 fs, const char *step)
+{
+    nv_read16(fs, NV_PRMVIO + 0x3cc);
+    u8 misc = GET_FS(fs, io), misc_p = inb(0x3cc);
+    outb(0x05, 0x3ce);
+    nv_read16(fs, NV_PRMVIO + 0x3ce);
+    u8 gri = GET_FS(fs, io);
+    nv_read16(fs, NV_PRMVIO + 0x3c2);
+    u8 vse2 = GET_FS(fs, io) >> 8;
+    int ok = misc_p == misc && gri == 0x05;
+    dprintf(1, "fbsync: ports %s: %s (misc %x port %x, gr index %x, vse2 %x)\n"
+            , step, ok ? "open" : "shut", misc, misc_p, gri, vse2);
+    return ok;
+}
+
+// The legacy ports reach the NV2A only once the AGP bridge's VGA Enable is
+// written off and on after VSE2 is set: the bit set by the init stage alone
+// leaves them shut (port reads ff), as does VSE2 alone (1.4, ticket #38).
+static void
+nv_open_ports(void)
+{
+    u16 br = pci_to_bdf(0, 0x1e, 0);
+    u32 ctl = pci_config_readl(br, 0x3c);
+    pci_config_writel(br, 0x3c, ctl & ~(1u << 19));
+    pci_config_writel(br, 0x3c, ctl | (1u << 19));
+}
+
+static void
+nv_start(u16 fs, u32 start)
+{
+    nv_write(fs, NV_PCRTC + 0x800, start, 4);
+}
+
+static int
+nv_available(u16 fs)
+{
+    return GET_GLOBAL(NvVga.mmio) && !GET_FS(fs, off);
+}
+
+static void load_soft_dac_to_hw(u16 fs);
+
+// Mode 13h in VGA format: byte mode (the NV2A shifts a dword-mode address as
+// an IBM VGA does), chain-4, 256-colour shift, pixel doubling (AR10 bit 6)
+// and double scan (CR09) on the unchanged 640x480 raster, 400 lines centred
+// through the CRTC display end and the flat-panel vertical timing.
+static void
+nv_enter_13h(u16 fs, int load_dac)
+{
+    u8 cr07 = GET_GLOBAL(NvVga.cr07), cr09 = GET_GLOBAL(NvVga.cr09);
+    u32 vd = NV13_LINES - 1, top = (NV13_HEIGHT - NV13_LINES) / 2;
+    int i;
+    nv_seq(fs, 0x01, 0x01);             // 8-dot clock, display on
+    nv_seq(fs, 0x02, 0x0f);
+    nv_seq(fs, 0x04, 0x0e);             // chain-4, no odd/even
+    nv_gr(fs, 0x05, 0x40);              // 256-colour shift
+    nv_gr(fs, 0x06, 0x05);              // graphics, A0000 64 KiB
+    nv_attr_begin(fs);
+    for (i = 0; i < 16; i++)
+        nv_attr(fs, i, i);
+    nv_attr(fs, 0x10, 0x41);            // graphics, 8-bit colour
+    nv_attr(fs, 0x11, 0x00);
+    nv_attr(fs, 0x12, 0x0f);
+    nv_attr(fs, 0x13, 0x00);
+    nv_attr(fs, 0x14, 0x00);
+    nv_attr_end(fs);
+    nv_write(fs, NV_PRMDIO + 0x3c6, 0xff, 2);   // pel mask (3C7h: read index 0)
+    nv_crtc(fs, 0x09, (cr09 & 0xe0) | 0x01);    // double scan
+    nv_crtc(fs, 0x13, 0x28);            // 320 bytes per row in byte mode
+    nv_crtc(fs, 0x25, GET_GLOBAL(NvVga.cr25) & ~0x20);
+    nv_crtc(fs, 0x14, 0x00);            // byte mode
+    nv_crtc(fs, 0x17, 0xe3);
+    // Display end and blank start at line 400; the flat panel's display
+    // end 80 lines earlier and its sync 40 lines earlier, so the picture
+    // sits between 40 black lines above and below.
+    nv_crtc(fs, 0x12, vd);
+    nv_crtc(fs, 0x15, vd);
+    nv_crtc(fs, 0x07, (cr07 & ~0x4a) | ((vd >> 7) & 0x02) | ((vd >> 5) & 0x08)
+            | ((vd >> 3) & 0x40));
+    nv_write(fs, NV_PRAMDAC + 0x800, GET_GLOBAL(NvVga.fp_v[0]) - 2 * top, 4);
+    nv_write(fs, NV_PRAMDAC + 0x808, GET_GLOBAL(NvVga.fp_v[2]) - 2 * top, 4);
+    nv_write(fs, NV_PRAMDAC + 0x80c, GET_GLOBAL(NvVga.fp_v[3]) - top, 4);
+    nv_write(fs, NV_PRAMDAC + 0x810, GET_GLOBAL(NvVga.fp_v[4]) - top, 4);
+    nv_write(fs, NV_PRAMDAC + 0x818, GET_GLOBAL(NvVga.fp_v[6]) - 2 * top, 4);
+    nv_crtc(fs, 0x28, GET_GLOBAL(NvVga.cr28) & 0x80);   // VGA format
+    nv_crtc(fs, 0x19, 0x00);            // pitch bits 10:8
+    nv_misc(fs, GET_GLOBAL(NvVga.misc) | 0x01, 0x01);
+    nv_open_ports();
+    nv_start(fs, SEG_GRAPH << 4);       // last: CR19 moves it
+    SET_FS(fs, native, 1);
+    if (load_dac)
+        load_soft_dac_to_hw(fs);
+    dprintf(1, "fbsync: native 13h on%s\n", load_dac ? ", DAC loaded" : "");
+    nv_ports_ok(fs, "in 13h");
+
+    // Reading the DAC back through ports 3C7h/3C9h, once: int 10h 1015h and
+    // 1017h use it, or the BIOS's own copy if it does not work.
+    if (load_dac && !GET_FS(fs, dac_ports)) {
+        u8 r, g, b, n = 0x29;   // default 13h palette: 3f 10 00
+        nv_dac_read(n, &r, &g, &b);
+        u8 wr = GET_FS(fs, dac[n * 3]) & 0x3f, wg = GET_FS(fs, dac[n * 3 + 1]) & 0x3f;
+        u8 wb = GET_FS(fs, dac[n * 3 + 2]) & 0x3f;
+        int ok = r == wr && g == wg && b == wb;
+        SET_FS(fs, dac_ports, ok ? 1 : 2);
+        dprintf(1, "fbsync: DAC read through ports %s (entry %x: %x %x %x, want %x %x %x)\n"
+                , ok ? "ok" : "FAILS, int 10h reads the BIOS copy", n, r, g, b
+                , wr, wg, wb);
+    }
+}
+
+// Back to the 32 bpp scanout from the saved set, PCRTC_START last; the DAC
+// does not touch 32 bpp, so it stays as 13h left it.
+static void
+nv_leave_13h(u16 fs)
+{
+    int i;
+    for (i = 0; i < 7; i++)
+        nv_write(fs, NV_PRAMDAC + 0x800 + 4 * i, GET_GLOBAL(NvVga.fp_v[i]), 4);
+    nv_seq(fs, 0x02, GET_GLOBAL(NvVga.sr02));
+    nv_seq(fs, 0x04, GET_GLOBAL(NvVga.sr04));
+    nv_gr(fs, 0x05, GET_GLOBAL(NvVga.gr05));
+    nv_gr(fs, 0x06, GET_GLOBAL(NvVga.gr06));
+    nv_attr_begin(fs);
+    nv_attr(fs, 0x10, GET_GLOBAL(NvVga.ar10));
+    nv_attr(fs, 0x11, GET_GLOBAL(NvVga.ar11));
+    nv_attr(fs, 0x12, GET_GLOBAL(NvVga.ar12));
+    nv_attr(fs, 0x13, GET_GLOBAL(NvVga.ar13));
+    nv_attr(fs, 0x14, GET_GLOBAL(NvVga.ar14));
+    nv_attr_end(fs);
+    nv_crtc(fs, 0x07, GET_GLOBAL(NvVga.cr07));
+    nv_crtc(fs, 0x09, GET_GLOBAL(NvVga.cr09));
+    nv_crtc(fs, 0x12, GET_GLOBAL(NvVga.cr12));
+    nv_crtc(fs, 0x13, GET_GLOBAL(NvVga.cr13));
+    nv_crtc(fs, 0x14, GET_GLOBAL(NvVga.cr14));
+    nv_crtc(fs, 0x15, GET_GLOBAL(NvVga.cr15));
+    nv_crtc(fs, 0x17, GET_GLOBAL(NvVga.cr17));
+    nv_crtc(fs, 0x25, GET_GLOBAL(NvVga.cr25));
+    nv_crtc(fs, 0x28, GET_GLOBAL(NvVga.cr28));
+    nv_crtc(fs, 0x19, GET_GLOBAL(NvVga.cr19));
+    nv_seq(fs, 0x01, GET_GLOBAL(NvVga.sr01));
+    nv_misc(fs, GET_GLOBAL(NvVga.misc), 0x00);  // ports shut again
+    nv_start(fs, GET_GLOBAL(NvVga.start));
+    SET_FS(fs, native, 0);
+    SET_FS(fs, force, 1);
+    dprintf(1, "fbsync: native 13h off, 32 bpp scanout back\n");
+    nv_ports_ok(fs, "after leaving 13h");
+}
+
+// Before every mode set (cbvga_set_mode): leave native 13h. With rendering
+// off (4F14h) the hardware is not this BIOS's to touch.
+void
+fbsync_leave_native(void)
+{
+    u16 fs = GET_GLOBAL(FbsyncSeg);
+    if (fs && GET_FS(fs, native) && !GET_FS(fs, off))
+        nv_leave_13h(fs);
+}
+
+
+/****************************************************************
  * Palette
  ****************************************************************/
 
@@ -113,20 +404,23 @@ set_dac(u16 fs, int i, u8 r, u8 g, u8 b)
     SET_FS(fs, dac[i * 3 + 0], r);
     SET_FS(fs, dac[i * 3 + 1], g);
     SET_FS(fs, dac[i * 3 + 2], b);
+    if (GET_FS(fs, native) && !GET_FS(fs, off))
+        nv_dac_write(fs, i, r, g, b);
     r &= 0x3f; g &= 0x3f; b &= 0x3f;
     u32 px = (((r << 2) | (r >> 4)) << 16) | (((g << 2) | (g >> 4)) << 8)
         | ((b << 2) | (b >> 4));
     SET_FS(fs, pal[i], px);
 }
 
-// The EGA 64-colour set: bits 0-2 = blue/green/red (0x2a), bits 3-5 the
-// secondary intensities (0x15). The default DAC of the text modes.
+// DAC entry i <- colour c of the EGA 64-colour set: bits 0-2 =
+// blue/green/red (0x2a), bits 3-5 the secondary intensities (0x15). The text
+// modes' default DAC is that set itself (i = c).
 static void
-set_dac_ega(u16 fs, int i)
+set_dac_ega(u16 fs, int i, int c)
 {
-    set_dac(fs, i, 0x2a * ((i >> 2) & 1) + 0x15 * ((i >> 5) & 1)
-            , 0x2a * ((i >> 1) & 1) + 0x15 * ((i >> 4) & 1)
-            , 0x2a * (i & 1) + 0x15 * ((i >> 3) & 1));
+    set_dac(fs, i, 0x2a * ((c >> 2) & 1) + 0x15 * ((c >> 5) & 1)
+            , 0x2a * ((c >> 1) & 1) + 0x15 * ((c >> 4) & 1)
+            , 0x2a * (c & 1) + 0x15 * ((c >> 3) & 1));
 }
 
 // The 16 text colours' DAC indexes in the EGA set (6 is brown, 0x14).
@@ -156,18 +450,41 @@ static u8 hue_rgb[24][3] VAR16 = {
 };
 
 static void
+load_soft_dac_to_hw(u16 fs)
+{
+    int i;
+    for (i = 0; i < 256; i++)
+        nv_dac_write(fs, i, GET_FS(fs, dac[i * 3]), GET_FS(fs, dac[i * 3 + 1])
+                     , GET_FS(fs, dac[i * 3 + 2]));
+}
+
+// One DAC entry for int 10h 1015h/1017h: the hardware's in native 13h
+// (where programs write it through the ports), else the BIOS's copy.
+static void
+get_dac(u16 fs, int i, u8 *r, u8 *g, u8 *b)
+{
+    if (GET_FS(fs, native) && !GET_FS(fs, off) && GET_FS(fs, dac_ports) == 1) {
+        nv_dac_read(i, r, g, b);
+        return;
+    }
+    *r = GET_FS(fs, dac[i * 3 + 0]);
+    *g = GET_FS(fs, dac[i * 3 + 1]);
+    *b = GET_FS(fs, dac[i * 3 + 2]);
+}
+
+static void
 load_default_dac(u16 fs, int mode13)
 {
     int i;
     if (!mode13) {
         for (i = 0; i < 64; i++)
-            set_dac_ega(fs, i);
+            set_dac_ega(fs, i, i);
         for (; i < 256; i++)
             set_dac(fs, i, 0, 0, 0);
         return;
     }
     for (i = 0; i < 16; i++)
-        set_dac_ega(fs, GET_GLOBAL(attr_default[i]));
+        set_dac_ega(fs, i, GET_GLOBAL(attr_default[i]));
     for (i = 0; i < 16; i++) {
         u8 v = GET_GLOBAL(grey_ramp[i]);
         set_dac(fs, 16 + i, v, v, v);
@@ -223,18 +540,21 @@ fbsync_1010(struct bregs *regs)
                     , GET_FARVAR(regs->es, p[1]), GET_FARVAR(regs->es, p[2]));
         }
         break;
-    case 0x15:
-        regs->dh = GET_FS(fs, dac[regs->bl * 3 + 0]);
-        regs->ch = GET_FS(fs, dac[regs->bl * 3 + 1]);
-        regs->cl = GET_FS(fs, dac[regs->bl * 3 + 2]);
+    case 0x15: {
+        u8 r, g, b;
+        get_dac(fs, regs->bl, &r, &g, &b);
+        regs->dh = r;
+        regs->ch = g;
+        regs->cl = b;
         break;
+    }
     case 0x17:
         for (i = 0; i < regs->cx && (regs->bx + i) < 256; i++) {
-            u8 *p = (u8*)(regs->dx + i * 3);
-            int n = (regs->bx + i) * 3;
-            SET_FARVAR(regs->es, p[0], GET_FS(fs, dac[n + 0]));
-            SET_FARVAR(regs->es, p[1], GET_FS(fs, dac[n + 1]));
-            SET_FARVAR(regs->es, p[2], GET_FS(fs, dac[n + 2]));
+            u8 *p = (u8*)(regs->dx + i * 3), r, g, b;
+            get_dac(fs, regs->bx + i, &r, &g, &b);
+            SET_FARVAR(regs->es, p[0], r);
+            SET_FARVAR(regs->es, p[1], g);
+            SET_FARVAR(regs->es, p[2], b);
         }
         break;
     default:
@@ -468,6 +788,10 @@ fbsync_off(void)
 }
 
 // int 10h ax=4F14h: bl=0 off, bl=1 on (repaints), bl=2 query (bh = 1 on).
+// Off leaves the screen as it is, native 13h included: no framebuffer,
+// register or DAC writes until on. On brings the NV2A back in line with the
+// current mode (native 13h again, its DAC from the BIOS's copy, or the
+// 32 bpp scanout), since whoever had the screen may have reprogrammed it.
 void
 fbsync_104f14(struct bregs *regs)
 {
@@ -483,6 +807,10 @@ fbsync_104f14(struct bregs *regs)
     case 1:
         SET_FS(fs, off, 0);
         SET_FS(fs, force, 1);
+        if (GET_GLOBAL(NvVga.mmio) && get_current_mode() == &fbsync_modes[3])
+            nv_enter_13h(fs, 1);
+        else if (GET_FS(fs, native))
+            nv_leave_13h(fs);
         break;
     default:
         break;
@@ -499,7 +827,7 @@ fbsync_render(int force)
     if (!fs || !GET_FS(fs, active) || GET_FS(fs, busy))
         return;
     struct vgamode_s *vmode_g = get_current_mode();
-    if (!is_fbsync_mode(vmode_g) || GET_FS(fs, off))
+    if (!is_fbsync_mode(vmode_g) || GET_FS(fs, off) || GET_FS(fs, native))
         return;
     SET_FS(fs, busy, 1);
     if (GET_FS(fs, force)) {
@@ -564,6 +892,13 @@ fbsync_set_mode(struct vgamode_s *vmode_g, int flags)
             dprintf(1, "fbsync: mode set takes the screen\n");
             SET_FS(fs, active, 1);
         }
+    }
+    if (!text && nv_available(fs)) {
+        // The NV2A shows A0000 itself; the framebuffer keeps the text
+        // screen for the way back.
+        SET_FS(fs, active, 1);
+        nv_enter_13h(fs, !(flags & MF_NOPALETTE));
+        return;
     }
     if (GET_FS(fs, active) && !(flags & MF_NOCLEARMEM) && !GET_FS(fs, off)) {
         struct fbinfo fb;
@@ -633,6 +968,13 @@ fbsync_setup(void)
     for (i = 0; i < 16; i++)
         SET_FS(fs, attr[i], GET_GLOBAL(attr_default[i]));
     load_default_dac(fs, 0);
+    struct cb_header *cbh = find_cb_table();
+    struct cb_xbox_vga *nv = cbh ? find_cb_subtable(cbh, CB_TAG_XBOX_VGA) : NULL;
+    if (nv && GET_FARVAR(0, nv->size) >= sizeof(NvVga)) {
+        memcpy_far(get_global_seg(), &NvVga, 0, nv, sizeof(NvVga));
+        dprintf(1, "fbsync: native 13h on the NV2A at %x (32 bpp start %x)\n"
+                , GET_GLOBAL(NvVga.mmio), GET_GLOBAL(NvVga.start));
+    }
     // Text memory starts blank, so nothing is painted over the platform's
     // screen until something writes it; the first mode set (the BIOS's own,
     // without a clear) records it as rendered.

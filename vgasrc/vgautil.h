@@ -27,6 +27,7 @@ struct bregs;
 struct vgamode_s *fbsync_find_mode(int mode);
 int fbsync_linelength(struct vgamode_s *vmode_g);
 void fbsync_set_mode(struct vgamode_s *vmode_g, int flags);
+void fbsync_leave_native(void);
 void fbsync_1010(struct bregs *regs);
 int fbsync_off(void);
 void fbsync_104f14(struct bregs *regs);
