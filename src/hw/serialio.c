@@ -17,7 +17,9 @@
 
 #define DEBUG_TIMEOUT 100000
 
-// Zero when CONFIG_DEBUG_SERIAL_PROBE found no UART (serial_debug_detect).
+// Zero when CONFIG_DEBUG_SERIAL_PROBE found no UART (serial_debug_detect):
+// the data port is then written blind, without waiting on the status
+// register, so a bus sniffer still sees every byte.
 u8 SerialDebugPresent VARFSEG = 1;
 
 // Write to a serial port register
@@ -64,7 +66,7 @@ serial_debug_preinit(void)
                 , oldparam, oldier, newparam, newier);
 }
 
-// Probe the UART's scratch register; silence serial output if absent.
+// Probe the UART's scratch register; write blind (no status waits) if absent.
 void
 serial_debug_detect(void)
 {
@@ -77,7 +79,7 @@ serial_debug_detect(void)
     if (a == 0x5a && b == 0xa5)
         return;
     SerialDebugPresent = 0;
-    dprintf(1, "No UART at %x (scratch read %x %x): serial debug off\n"
+    dprintf(1, "No UART at %x (scratch read %x %x): writing serial debug blind\n"
             , CONFIG_DEBUG_SERIAL_PORT, a, b);
 }
 
@@ -87,13 +89,13 @@ serial_debug(char c)
 {
     if (!CONFIG_DEBUG_SERIAL && (!CONFIG_DEBUG_SERIAL_MMIO || MODESEGMENT))
         return;
-    if (CONFIG_DEBUG_SERIAL_PROBE && !GET_GLOBAL(SerialDebugPresent))
-        return;
-    int timeout = DEBUG_TIMEOUT;
-    while ((serial_debug_read(SEROFF_LSR) & 0x20) != 0x20)
-        if (!timeout--)
-            // Ran out of time.
-            return;
+    if (!CONFIG_DEBUG_SERIAL_PROBE || GET_GLOBAL(SerialDebugPresent)) {
+        int timeout = DEBUG_TIMEOUT;
+        while ((serial_debug_read(SEROFF_LSR) & 0x20) != 0x20)
+            if (!timeout--)
+                // Ran out of time.
+                return;
+    }
     serial_debug_write(SEROFF_DATA, c);
 }
 

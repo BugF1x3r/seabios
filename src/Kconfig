@@ -561,13 +561,15 @@ menu "Debugging"
             Base port for serial - generally 0x3f8, 0x2f8, 0x3e8, or 0x2e8.
     config DEBUG_SERIAL_PROBE
         depends on DEBUG_SERIAL
-        bool "Skip serial debug output when no UART answers"
+        bool "Write serial debug output blind when no UART answers"
         default n
         help
-            Probe the UART's scratch register once at POST and send no
-            serial output when it does not hold a value. Without a UART
-            every character otherwise waits on a floating bus for up to
-            the transmit timeout, which can slow the boot to a crawl.
+            Probe the UART's scratch register once at POST. When it does
+            not hold a value, keep writing every character to the data
+            port but never wait on the line status register. Without a
+            UART every character otherwise waits on a floating bus for up
+            to the transmit timeout, which can slow the boot to a crawl;
+            the blind writes still reach a bus analyser or sniffer.
    config DEBUG_SERIAL_MMIO
         depends on DEBUG_LEVEL != 0 && !DEBUG_SERIAL
         bool "Serial port debugging via memory mapped IO"
